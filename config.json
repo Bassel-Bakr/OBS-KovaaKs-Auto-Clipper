@@ -1,0 +1,14 @@
+{
+  // Folder where FPS Aim Trainer saves stats CSV files
+  "stats_folder": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\stats",
+  // OBS WebSocket port (set in OBS WebSocket settings)
+  "obs_port": 4455,
+  // OBS WebSocket password (set in OBS WebSocket settings)
+  "obs_password": "",
+  // Folder where OBS saves replay buffer clips
+  "obs_replay_folder": "D:\\OBS",
+  // Amount of extra footage (in seconds) to include before saving the replay
+  "trim_padding": 5,
+   // Time to wait after triggering replay save before processing the file (to ensure OBS has finalized it)
+  "process_replay_delay": 5
+}
