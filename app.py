@@ -208,6 +208,9 @@ class NewStatsHandler(FileSystemEventHandler):
         start_dt = compute_start_time(end_dt, challenge_start)
         print(f"✅ Start time: {start_dt}")
 
+        # ==== WAIT a bit ====
+        time.sleep(self.config.trim_padding)
+
         # ==== Save replay buffer ====
         try:
             self.client.save_replay_buffer()
