@@ -1,4 +1,4 @@
-import json
+import json5 as json
 import time
 import re
 import csv
@@ -227,7 +227,7 @@ class NewStatsHandler(FileSystemEventHandler):
                 end_dt - start_dt
             ).total_seconds() + self.config.trim_padding
 
-            trim_clip(latest, duration_seconds, challenge_name, challenge_score)
+            trim_clip(Path(latest), duration_seconds, challenge_name, challenge_score)
 
             # delete original if desired
             # latest.unlink()
