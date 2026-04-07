@@ -1,7 +1,4 @@
 import os
-import stat
-import threading
-
 import json5 as json
 import time
 import re
