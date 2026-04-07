@@ -1,3 +1,7 @@
+import os
+import stat
+import threading
+
 import json5 as json
 import time
 import re
@@ -9,6 +13,71 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+# This is used to track the best score of the current session for each scenario.
+# We decide whether to save a new replay based on the "only_pb" config option.
+# Key: scenario name, Value: best score
+SCENARIO_PB = dict()
+
+
+@dataclass
+class Stat:
+    """
+    Represents a single stat entry from the CSV file.
+    """
+
+    stat_file: Path
+    challenge_start: timedelta
+    scenario: str
+    score: float
+
+    start_dt: datetime = None
+    end_dt: datetime = None
+
+    @property
+    def duration(self) -> timedelta:
+        return self.end_dt - self.start_dt
+
+    def __init__(self, stat_file: Path):
+        self.stat_file = stat_file
+        self.end_dt = self.get_end_time(self.stat_file)
+
+        # ==== Read CSV ====
+        try:
+            with open(self.stat_file, newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+
+                for row in reader:
+                    if len(row) < 2:
+                        continue
+
+                    if row[0].strip() == "Challenge Start:":
+                        self.challenge_start = parse_timestamp(row[1].strip())
+
+                    if row[0].strip() == "Scenario:":
+                        self.scenario = row[1].strip()
+
+                    if row[0].strip() == "Score:":
+                        score = float(row[1].strip())
+                        self.score = int(score) if score.is_integer() else score
+
+        except Exception as e:
+            print(f"❌ CSV read error: {e}")
+            return
+
+        # ==== Compute start time ====
+        self.start_dt = compute_start_time(self.end_dt, self.challenge_start)
+
+    def get_end_time(self, stat_file: Path) -> datetime:
+        """
+        Extracts the end time from the filename if it matches the pattern "YYYY.MM.DD-HH.MM.SS"."
+        If the pattern is not found, it falls back to using the file's creation time.
+        """
+        match = re.search(r"\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}", stat_file.name)
+        if match:
+            return datetime.strptime(match.group(), "%Y.%m.%d-%H.%M.%S")
+
+        return datetime.fromtimestamp(stat_file.stat().st_birthtime)
 
 
 @dataclass
@@ -23,6 +92,7 @@ class Config:
     obs_password = ""
     trim_padding = 5
     process_replay_delay = 5
+    only_pb = True
 
     def load_from_file(self, path="config.json"):
         with open(path, "r") as f:
@@ -34,6 +104,42 @@ class Config:
         json_data = json.dumps(asdict(self))
         with open(path, "w") as f:
             f.write(json_data)
+
+
+def extract_score_from_csv(file_path: str) -> float:
+    try:
+        with open(file_path, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+
+            for row in reader:
+                if len(row) < 2:
+                    continue
+
+                if row[0].strip() == "Score:":
+                    score = float(row[1].strip())
+                    return int(score) if score.is_integer() else score
+
+    except Exception as e:
+        print(f"❌ CSV read error: {e}")
+        return None
+
+
+def find_best_score(folder: str, stat: Stat) -> float:
+    best_score = float("-inf")
+
+    for file in os.listdir(folder):
+        if (
+            file.startswith(stat.scenario + " - Challenge -")
+            and file.endswith(".csv")
+            # exclude the current stat file since it might be the new PB we're trying to compare against
+            and file != stat.stat_file.name 
+        ):
+            file_path = os.path.join(folder, file)
+            score = extract_score_from_csv(file_path)
+
+            best_score = max(best_score, score or best_score)
+
+    return best_score
 
 
 def parse_timestamp(ts: str) -> timedelta:
@@ -69,18 +175,6 @@ def compute_start_time(end_dt: datetime, challenge_start_td: timedelta) -> datet
     return start_dt
 
 
-def get_end_time(filepath: Path) -> datetime:
-    """
-    Extracts the end time from the filename if it matches the pattern "YYYY.MM.DD-HH.MM.SS"."
-    If the pattern is not found, it falls back to using the file's creation time.
-    """
-    match = re.search(r"\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}", filepath.name)
-    if match:
-        return datetime.strptime(match.group(), "%Y.%m.%d-%H.%M.%S")
-
-    return datetime.fromtimestamp(filepath.stat().st_birthtime)
-
-
 def wait_until_ready(path: Path, timeout: int = 5) -> bool:
     """
     Waits until the file at the given path is ready (i.e., can be opened without error).
@@ -96,26 +190,21 @@ def wait_until_ready(path: Path, timeout: int = 5) -> bool:
             time.sleep(0.2)
 
 
-def get_latest_mkv(folder: Path) -> Path:
-    files = list(folder.glob("*.mkv"))
-    if not files:
-        raise Exception("No MKV files found")
-    return max(files, key=lambda f: f.stat().st_birthtime)
-
-
-def trim_clip(
-    input_path: Path, duration_seconds: int, challenge_name: str, challenge_score: float
-):
+def trim_clip(input_path: Path, duration_seconds: int, stat: Stat):
     """
     Trims the input video to the specified duration and saves it with a filename based on the challenge name and score.
     """
-    output_folder = input_path.with_name("KovaaK's").joinpath(challenge_name)
+    output_folder = input_path.with_name("KovaaK's").joinpath(stat.scenario)
     output_folder.mkdir(parents=True, exist_ok=True)
 
     clip_time = datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
-    extension = input_path.suffix.lstrip(".")
+
+    # For simplicity, we save as MP4. You can change this to match your OBS output format if needed.
+    extension = "mp4"
+    # extension = input_path.suffix.lstrip(".")
+
     output_path = output_folder.joinpath(
-        f"{challenge_name} - {challenge_score} - {clip_time}.{extension}"
+        f"{stat.scenario} - {stat.score} - {clip_time}.{extension}"
     )
 
     cmd = [
@@ -156,57 +245,18 @@ class NewStatsHandler(FileSystemEventHandler):
         if not filepath.name.endswith(".csv"):
             return
 
-        print(f"\n📄 New file detected: {filepath.name}")
+        print(f"📄 New file detected: {filepath.name}")
 
         # Wait for file to finish writing
         if not wait_until_ready(filepath):
             print("❌ File not ready")
             return
 
-        # ==== Get end time ====
-        end_dt = get_end_time(filepath)
-        print(f"🕒 End time: {end_dt}")
+        stat = Stat(filepath)
 
-        challenge_start = None
-        challenge_name = None
-        challenge_score = 0
-
-        # ==== Read CSV ====
-        try:
-            with open(filepath, newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-
-                for row in reader:
-                    if len(row) < 2:
-                        continue
-
-                    if row[0].strip() == "Challenge Start:":
-                        challenge_start = parse_timestamp(row[1].strip())
-
-                    if row[0].strip() == "Scenario:":
-                        challenge_name = row[1].strip()
-
-                    if row[0].strip() == "Score:":
-                        challenge_score = float(row[1].strip())
-                        challenge_score = (
-                            int(challenge_score)
-                            if challenge_score.is_integer()
-                            else challenge_score
-                        )
-
-        except Exception as e:
-            print(f"❌ CSV read error: {e}")
-            return
-
-        if not challenge_start:
+        if not stat.challenge_start:
             print("❌ Challenge Start not found")
             return
-
-        print(f"⏱ Challenge offset: {challenge_start}")
-
-        # ==== Compute start time ====
-        start_dt = compute_start_time(end_dt, challenge_start)
-        print(f"✅ Start time: {start_dt}")
 
         # ==== WAIT a bit ====
         time.sleep(self.config.trim_padding)
@@ -222,21 +272,44 @@ class NewStatsHandler(FileSystemEventHandler):
         # ==== Wait for OBS file ====
         time.sleep(self.config.process_replay_delay)
 
+        latest = Path(self.client.get_last_replay_buffer_replay().saved_replay_path)
+
+        should_save, previous_best = self.get_previous_best(stat)
+        if not should_save:
+            print(
+                f"⚠️ Score {stat.score} is not better than previous best {previous_best} for scenario '{stat.scenario}'. Skipping replay save."
+            )
+
+            # delete the replay file since we won't be using it
+            latest.unlink(missing_ok=True)
+            return
+
         # ==== Trim clip ====
         try:
-            latest: str = self.client.get_last_replay_buffer_replay().saved_replay_path
-
-            duration_seconds = (
-                end_dt - start_dt
-            ).total_seconds() + self.config.trim_padding
-
-            trim_clip(Path(latest), duration_seconds, challenge_name, challenge_score)
+            duration_seconds = stat.duration.total_seconds() + self.config.trim_padding
+            trim_clip(Path(latest), duration_seconds, stat)
 
             # delete original if desired
             # latest.unlink()
 
         except Exception as e:
             print(f"❌ Trim error: {e}")
+
+    def get_previous_best(self, stat: Stat) -> bool:
+        if not self.config.only_pb:
+            return True
+
+        previous_best = SCENARIO_PB.get(stat.scenario, None)
+
+        if previous_best is None:
+            previous_best = find_best_score(self.config.stats_folder, stat)
+            SCENARIO_PB[stat.scenario] = previous_best
+
+        if stat.score <= previous_best:
+            return False, previous_best
+
+        SCENARIO_PB[stat.scenario] = stat.score
+        return True, previous_best
 
 
 def main():
