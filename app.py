@@ -20,6 +20,7 @@ CACHE_PATH = Path("cache.json")
 # Key: scenario name, Value: best score
 SCENARIO_PB = dict()
 
+
 @dataclass
 class Stat:
     """
@@ -99,24 +100,6 @@ class Config:
                     setattr(self, field, data[field])
 
 
-def is_file_stable(path, wait=0.5, checks=3):
-    last_size = -1
-
-    for _ in range(checks):
-        try:
-            size = os.path.getsize(path)
-        except FileNotFoundError:
-            return False
-
-        if size != last_size:
-            last_size = size
-            time.sleep(wait)
-        else:
-            return True
-
-    return False
-
-
 def init_cache(config: Config):
     """
     Initializes the scenario PB cache by scanning all existing CSV files in the stats folder.
@@ -160,21 +143,6 @@ def init_cache(config: Config):
     json_data = json.dumps(cache, default=str, indent=2)
     with open(CACHE_PATH, "w") as f:
         f.write(json_data)
-
-
-def extract_score_from_csv(file_path: Path) -> float:
-    """
-    Extracts the score from the CSV file by looking for the line that starts with "Score:" and parsing the value.
-    """
-    try:
-        with open(file_path, encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("Score:"):
-                    score = float(line.split(",")[1])
-                    return int(score) if score.is_integer() else score
-    except Exception as e:
-        print(f"❌ CSV read error: {e}")
-        return None
 
 
 def parse_timestamp(ts: str) -> timedelta:
