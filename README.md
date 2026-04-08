@@ -1,6 +1,6 @@
-# Python Project
+# OBS KovaaK's Auto Clipper
 
-Welcome to your Python project!
+A simple tool to auto-clip your KovaaK's runs in OBS. 
 
 ## Getting Started
 
