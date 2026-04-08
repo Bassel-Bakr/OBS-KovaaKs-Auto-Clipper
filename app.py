@@ -1,8 +1,9 @@
 import os
-import json5 as json
+from typing import Tuple
+import json5
+import json
 import time
 import re
-import csv
 import subprocess
 import obsws_python as obs
 from dataclasses import asdict, dataclass
@@ -11,11 +12,13 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+# Cache file to store PBs for each scenario. This is used to avoid saving replays that aren't PBs when the application is first started.
+CACHE_PATH = Path("cache.json")
+
 # This is used to track the best score of the current session for each scenario.
 # We decide whether to save a new replay based on the "only_pb" config option.
 # Key: scenario name, Value: best score
 SCENARIO_PB = dict()
-
 
 @dataclass
 class Stat:
@@ -41,22 +44,17 @@ class Stat:
 
         # ==== Read CSV ====
         try:
-            with open(self.stat_file, newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-
-                for row in reader:
-                    if len(row) < 2:
-                        continue
-
-                    if row[0].strip() == "Challenge Start:":
-                        self.challenge_start = parse_timestamp(row[1].strip())
-
-                    if row[0].strip() == "Scenario:":
-                        self.scenario = row[1].strip()
-
-                    if row[0].strip() == "Score:":
-                        score = float(row[1].strip())
+            with open(self.stat_file, encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("Score:"):
+                        score = float(line.split(",")[1])
                         self.score = int(score) if score.is_integer() else score
+                    elif line.startswith("Challenge Start:"):
+                        self.challenge_start = parse_timestamp(
+                            line.split(",")[1].strip()
+                        )
+                    elif line.startswith("Scenario:"):
+                        self.scenario = line.split(",")[1].strip()
 
         except Exception as e:
             print(f"❌ CSV read error: {e}")
@@ -83,60 +81,100 @@ class Config:
     Configuration for the application. Can be loaded/saved from/to a JSON file.
     """
 
-    stats_folder = r"C:\Program Files (x86)\Steam\steamapps\common\FPSAimTrainer\FPSAimTrainer\stats"  # folder where CSV files appear
-    obs_recording_folder = ""
-    obs_port = 4455
-    obs_password = ""
-    trim_padding = 5
-    process_replay_delay = 5
-    only_pb = True
+    stats_folder: str = (
+        r"C:\Program Files (x86)\Steam\steamapps\common\FPSAimTrainer\FPSAimTrainer\stats"  # folder where CSV files appear
+    )
+    obs_recording_folder: str = ""
+    obs_port: int = 4455
+    obs_password: str = ""
+    trim_padding: float = 5
+    process_replay_delay: float = 5
+    only_pb: bool = True
 
     def load_from_file(self, path="config.json"):
         with open(path, "r") as f:
-            data = json.load(f)
-            for key, value in data.items():
-                setattr(self, key, value)
-
-    def save_to_file(self, path="config.json"):
-        json_data = json.dumps(asdict(self))
-        with open(path, "w") as f:
-            f.write(json_data)
+            data = json5.load(f)
+            for field in self.__dataclass_fields__:
+                if field in data:
+                    setattr(self, field, data[field])
 
 
-def extract_score_from_csv(file_path: str) -> float:
+def is_file_stable(path, wait=0.5, checks=3):
+    last_size = -1
+
+    for _ in range(checks):
+        try:
+            size = os.path.getsize(path)
+        except FileNotFoundError:
+            return False
+
+        if size != last_size:
+            last_size = size
+            time.sleep(wait)
+        else:
+            return True
+
+    return False
+
+
+def init_cache(config: Config):
+    """
+    Initializes the scenario PB cache by scanning all existing CSV files in the stats folder.
+    This is useful to avoid saving replays that aren't PBs when the application is first started.
+    """
+    folder = Path(config.stats_folder)
+
+    cache = json5.load(open(CACHE_PATH, "r")) if CACHE_PATH.exists() else {}
+
+    global SCENARIO_PB
+    SCENARIO_PB = cache["pbs"] if "pbs" in cache else {}
+
+    last_update = (
+        datetime.fromisoformat(cache["last_update"]) if "last_update" in cache else None
+    )
+    last_update_timestamp = last_update.timestamp() if last_update else None
+
+    current_update_date = datetime.now()
+
+    for file in folder.glob("*.csv"):
+        should_skip = (
+            last_update_timestamp is not None
+            and file.stat().st_birthtime <= last_update_timestamp
+        )
+
+        if should_skip:
+            continue
+
+        file_path = folder / file
+        stat = Stat(file_path)
+
+        if stat.scenario and stat.score:
+            previous_best = SCENARIO_PB.get(stat.scenario, None)
+
+            if previous_best is None or stat.score > previous_best:
+                SCENARIO_PB[stat.scenario] = stat.score
+
+    cache = {"pbs": SCENARIO_PB, "last_update": current_update_date.isoformat()}
+
+    # Save updated cache to file
+    json_data = json.dumps(cache, default=str, indent=2)
+    with open(CACHE_PATH, "w") as f:
+        f.write(json_data)
+
+
+def extract_score_from_csv(file_path: Path) -> float:
+    """
+    Extracts the score from the CSV file by looking for the line that starts with "Score:" and parsing the value.
+    """
     try:
-        with open(file_path, newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-
-            for row in reader:
-                if len(row) < 2:
-                    continue
-
-                if row[0].strip() == "Score:":
-                    score = float(row[1].strip())
+        with open(file_path, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("Score:"):
+                    score = float(line.split(",")[1])
                     return int(score) if score.is_integer() else score
-
     except Exception as e:
         print(f"❌ CSV read error: {e}")
         return None
-
-
-def find_best_score(folder: str, stat: Stat) -> float:
-    best_score = float("-inf")
-
-    for file in os.listdir(folder):
-        if (
-            file.startswith(stat.scenario + " - Challenge -")
-            and file.endswith(".csv")
-            # exclude the current stat file since it might be the new PB we're trying to compare against
-            and file != stat.stat_file.name 
-        ):
-            file_path = os.path.join(folder, file)
-            score = extract_score_from_csv(file_path)
-
-            best_score = max(best_score, score or best_score)
-
-    return best_score
 
 
 def parse_timestamp(ts: str) -> timedelta:
@@ -255,6 +293,19 @@ class NewStatsHandler(FileSystemEventHandler):
             print("❌ Challenge Start not found")
             return
 
+        # ==== Check previous best ====
+        previous_best = SCENARIO_PB.get(stat.scenario, None)
+
+        should_save = not self.config.only_pb or (
+            previous_best is None or stat.score > previous_best
+        )
+
+        if not should_save:
+            print(
+                f"⚠️ Score {stat.score} is not better than previous best {previous_best} for scenario '{stat.scenario}'. Skipping replay save."
+            )
+            return
+
         # ==== WAIT a bit ====
         time.sleep(self.config.trim_padding)
 
@@ -269,20 +320,9 @@ class NewStatsHandler(FileSystemEventHandler):
         # ==== Wait for OBS file ====
         time.sleep(self.config.process_replay_delay)
 
-        latest = Path(self.client.get_last_replay_buffer_replay().saved_replay_path)
-
-        should_save, previous_best = self.get_previous_best(stat)
-        if not should_save:
-            print(
-                f"⚠️ Score {stat.score} is not better than previous best {previous_best} for scenario '{stat.scenario}'. Skipping replay save."
-            )
-
-            # delete the replay file since we won't be using it
-            latest.unlink(missing_ok=True)
-            return
-
         # ==== Trim clip ====
         try:
+            latest = Path(self.client.get_last_replay_buffer_replay().saved_replay_path)
             duration_seconds = stat.duration.total_seconds() + self.config.trim_padding
             trim_clip(Path(latest), duration_seconds, stat)
 
@@ -292,15 +332,14 @@ class NewStatsHandler(FileSystemEventHandler):
         except Exception as e:
             print(f"❌ Trim error: {e}")
 
-    def get_previous_best(self, stat: Stat) -> bool:
+    def get_previous_best(self, stat: Stat) -> Tuple[bool, float | int | None]:
         if not self.config.only_pb:
-            return True
+            return True, None
 
         previous_best = SCENARIO_PB.get(stat.scenario, None)
 
         if previous_best is None:
-            previous_best = find_best_score(self.config.stats_folder, stat)
-            SCENARIO_PB[stat.scenario] = previous_best
+            return True, None
 
         if stat.score <= previous_best:
             return False, previous_best
@@ -313,6 +352,10 @@ def main():
     config = Config()
     config.load_from_file()
 
+    # if config.only_pb:
+    print("🔌 Initializing cache...")
+    init_cache(config)
+
     print("🔌 Connecting to OBS...")
 
     connection_kwargs = {
@@ -321,7 +364,13 @@ def main():
         "password": config.obs_password,
     }
 
-    client = obs.ReqClient(**connection_kwargs)
+    client: obs.ReqClient
+
+    try:
+        client = obs.ReqClient(**connection_kwargs)
+    except Exception as e:
+        print(f"❌ Failed to connect to OBS: {e}")
+        return
 
     print("✅ Connected to OBS")
 
