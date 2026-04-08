@@ -7,10 +7,12 @@
   "obs_password": "iqva9jaggwYSTa1V",
   // Folder where OBS saves replay buffer clips
   "obs_replay_folder": "D:\\OBS",
-  // Amount of extra footage (in seconds) to include before saving the replay
-  "trim_padding": 5,
-   // Time to wait after triggering replay save before processing the file (to ensure OBS has finalized it)
-  "process_replay_delay": 5,
+  // Amount of extra footage (in seconds) to include before the run
+  "trim_padding_start": 1,
+  // Amount of extra footage (in seconds) to include after the run
+  "trim_padding_end": 5,
+  // Whether to delete the original replay file after trimming
+  "delete_after_trimming": false,
   // Whether to only save the replay if it's a new personal best for the scenario during the current session
-  "only_pb": true
+  "only_pb": false
 }

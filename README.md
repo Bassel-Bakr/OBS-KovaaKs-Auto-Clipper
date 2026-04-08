@@ -43,7 +43,7 @@ Before running the app, update the `config.json` file with your OBS WebSocket pa
 ## Usage
 
 ```bash
-python app.py
+python -m src.app
 ```
 
 ## Contributing
