@@ -346,9 +346,9 @@ def main():
 
     if not running_replay_buffer:
         client.start_replay_buffer()
-        print("▶️ Replay buffer started")
+        print("▶️  Replay buffer started")
     else:
-        print("ℹ️ Replay buffer already running")
+        print("ℹ️  Replay buffer already running")
 
     # Set up stats folder watcher
     event_handler = NewStatsHandler(client, config)
