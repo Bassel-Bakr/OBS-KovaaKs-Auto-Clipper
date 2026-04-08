@@ -14,5 +14,5 @@
   // Whether to delete the original replay file after trimming
   "delete_after_trimming": false,
   // Whether to only save the replay if it's a new personal best for the scenario during the current session
-  "only_pb": false
+  "only_pb": true
 }
