@@ -1,4 +1,3 @@
+json5
 watchdog
 obsws-python
-pandas
-python-dateutil
