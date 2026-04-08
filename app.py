@@ -1,4 +1,3 @@
-import os
 from typing import Tuple
 import json5
 import json
@@ -6,7 +5,7 @@ import time
 import re
 import subprocess
 import obsws_python as obs
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from watchdog.observers import Observer
