@@ -1,0 +1,4 @@
+watchdog
+obsws-python
+pandas
+python-dateutil
