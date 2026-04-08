@@ -46,6 +46,19 @@ Before running the app, update the `config.json` file with your OBS WebSocket pa
 python -m src.app
 ```
 
+## Custom Callbacks
+You can define custom callbacks to perform actions after a clip has been created. To do this, create a `user_callbacks.py` file in the `src` directory and implement the `after_trimming` function. For example:
+
+```python
+# src/user_callbacks.py
+
+from src.callback import TrimCallbackParams
+
+def after_trimming(params: TrimCallbackParams):
+    print(f"Clip created: {params.trimmed_replay_path}")
+    # Add your custom actions here
+```
+
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
