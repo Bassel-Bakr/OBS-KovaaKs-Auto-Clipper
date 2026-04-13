@@ -1,28 +1,30 @@
 import importlib.util
 import subprocess
 from typing import Tuple
-import json5
-import json
 import time
 import obsws_python as obs
 from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
 
+from src.cache import Cache
 from src.callback import Callbacks, TrimCallbackParams
 from src.config import Config
-from src.stat import Stat, get_end_time
+from src.stat import Stat
 from src.utils import wait_until_stable
 from src.stat_watcher import StatWatcher
 
 
-def import_file(file: Path) -> Callbacks | None:
+def import_file(file: Path, missing_ok: bool = True) -> Callbacks | None:
     """
     Dynamically imports a Python file and returns its module object.
     """
 
     if not file.exists():
-        return None
+        if missing_ok:
+            return None
+        else:
+            raise FileNotFoundError(f"File not found: {file}")
 
     spec = importlib.util.spec_from_file_location(file.stem, file)
     module = importlib.util.module_from_spec(spec)
@@ -30,70 +32,13 @@ def import_file(file: Path) -> Callbacks | None:
     return module
 
 
-callbacks = import_file(Path("src/user_callbacks.py"))
-
-# Cache file to store PBs for each scenario. This is used to avoid saving replays that aren't PBs when the application is first started.
-CACHE_PATH = Path("cache.json")
-
-# This is used to track the best score of the current session for each scenario.
-# We decide whether to save a new replay based on the "only_pb" config option.
-# Key: scenario name, Value: best score
-SCENARIO_PB = dict()
-
-
-def save_cache(update_time: datetime = datetime.now()):
-    """
-    Saves the current scenario PB cache to a JSON file. This is called on application exit to persist the cache for the next session.
-    """
-    cache = {"pbs": SCENARIO_PB, "last_update": update_time.isoformat()}
-
-    # Save updated cache to file
-    json_data = json.dumps(cache, default=str, indent=2)
-    with open(CACHE_PATH, "w") as f:
-        f.write(json_data)
-
-
-def update_cache(config: Config):
-    """
-    Updates the scenario PB cache by scanning all existing CSV files in the stats folder.
-    This is useful to avoid saving replays that aren't PBs when the application is first started.
-    """
-    folder = Path(config.stats_folder)
-
-    cache = json5.load(open(CACHE_PATH, "r")) if CACHE_PATH.exists() else {}
-
-    global SCENARIO_PB
-    SCENARIO_PB = cache["pbs"] if "pbs" in cache else {}
-
-    last_update = (
-        datetime.fromisoformat(cache["last_update"]) if "last_update" in cache else None
-    )
-    last_update_timestamp = last_update.timestamp() if last_update else None
-
-    current_update_date = datetime.now()
-
-    for file in folder.glob("*.csv"):
-        should_skip = (
-            last_update_timestamp is not None
-            and get_end_time(file).timestamp() <= last_update_timestamp
-        )
-
-        if should_skip:
-            continue
-
-        file_path = folder / file
-        stat = Stat(file_path)
-
-        if stat.scenario and stat.score:
-            previous_best = SCENARIO_PB.get(stat.scenario, None)
-
-            if previous_best is None or stat.score > previous_best:
-                SCENARIO_PB[stat.scenario] = stat.score
-
-    save_cache(current_update_date)
-
-
-def on_new_stat(stat_path: Path, config: Config, client: obs.ReqClient):
+def on_new_stat(
+    stat_path: Path,
+    config: Config,
+    cache: Cache,
+    client: obs.ReqClient,
+    callbacks: Callbacks | None,
+):
     print(f"📄 New file detected: {stat_path.name}")
 
     stat = Stat(stat_path)
@@ -103,19 +48,20 @@ def on_new_stat(stat_path: Path, config: Config, client: obs.ReqClient):
         return
 
     # ==== Check previous best ====
-    previous_best = SCENARIO_PB.get(stat.scenario, None)
+    scenario_data = cache.get(stat.scenario)
 
     should_save = not config.only_pb or (
-        previous_best is None or stat.score > previous_best
+        scenario_data["play_count"] == 0 or stat.score > scenario_data["high_score"]
     )
 
     if not should_save:
         print(
-            f"⚠️ Score {stat.score} is not better than previous best {previous_best} for scenario '{stat.scenario}'. Skipping replay save."
+            f"⚠️ Score {stat.score} is not better than previous best {scenario_data['high_score']} for scenario '{stat.scenario}'. Skipping replay save."
         )
         return
 
-    SCENARIO_PB[stat.scenario] = stat.score
+    scenario_data["high_score"] = stat.score
+    scenario_data["play_count"] += 1
 
     # ==== WAIT a bit ====
     time.sleep(config.trim_padding_end)
@@ -157,7 +103,7 @@ def on_new_stat(stat_path: Path, config: Config, client: obs.ReqClient):
                 trimmed_replay_path=output_path,
                 stat=stat,
                 config=config,
-                client=client
+                client=client,
             )
             callbacks.after_trimming(params)
 
@@ -221,11 +167,17 @@ def connect_to_obs(config: Config) -> Tuple[obs.ReqClient | None, Exception | No
 
 
 def main():
+    print("🔌 Loading config...")
     config = Config()
     config.load_from_file()
 
+    print("🔌 Loading user callbacks...")
+    callbacks = import_file(Path(config.callbacks_file))
+
     print("🔌 Updating cache...")
-    update_cache(config)
+    cache = Cache(config)
+    cache.load()
+    cache.update()
 
     print("🔌 Connecting to OBS...")
     client, err = connect_to_obs(config)
@@ -246,7 +198,9 @@ def main():
         print("ℹ️  Replay buffer already running")
 
     # Set up stats folder watcher
-    event_handler = StatWatcher(lambda path: on_new_stat(path, config, client))
+    event_handler = StatWatcher(
+        lambda path: on_new_stat(path, config, cache, client, callbacks)
+    )
 
     observer = Observer()
     observer.schedule(event_handler, config.stats_folder, recursive=False)
@@ -259,8 +213,10 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("🛑 Stopping...")
-        save_cache()  # Save cache on exit
-        client.stop_replay_buffer()
+        cache.save()  # Save cache on exit
+        # Stop replay buffer if we started it, otherwise leave it running as it was before
+        if not running_replay_buffer:
+            client.stop_replay_buffer()
         client.disconnect()
         observer.stop()
 

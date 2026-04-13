@@ -17,6 +17,9 @@ class Config:
     delete_after_trimming: bool = False
     process_replay_delay: float = 5
     only_pb: bool = True
+    cache_version = "0.0.0"
+    cache_file = "cache.json"
+    callbacks_file = "src/user_callbacks.py"
 
     def load_from_file(self, path="config.json"):
         with open(path, "r") as f:

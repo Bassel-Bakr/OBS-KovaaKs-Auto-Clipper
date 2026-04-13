@@ -7,6 +7,7 @@ import obsws_python as obs
 from src.config import Config
 from src.stat import Stat
 
+
 @dataclass
 class TrimCallbackParams:
     replay_path: Path

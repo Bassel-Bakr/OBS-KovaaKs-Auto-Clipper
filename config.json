@@ -14,5 +14,11 @@
   // Whether to delete the original replay file after trimming
   "delete_after_trimming": false,
   // Whether to only save the replay if it's a new personal best for the scenario during the current session
-  "only_pb": true
+  "only_pb": true,
+  // Version of the cache file format. Increment this if you make breaking changes to the cache structure.
+  "cache_version": "1.0.0",
+  // Name of the cache file to use for storing personal bests and other data.
+  "cache_file": "cache.json",
+  // Name of the file to use for user-defined callbacks.
+  "callbacks_file": "src/user_callbacks.py"
 }
