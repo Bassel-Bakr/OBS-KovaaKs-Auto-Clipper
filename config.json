@@ -4,7 +4,7 @@
   // OBS WebSocket port (set in OBS WebSocket settings)
   "obs_port": 4455,
   // OBS WebSocket password (set in OBS WebSocket settings)
-  "obs_password": "iqva9jaggwYSTa1V",
+  "obs_password": "",
   // Folder where OBS saves replay buffer clips
   "obs_replay_folder": "D:\\OBS",
   // Amount of extra footage (in seconds) to include before the run
@@ -20,5 +20,17 @@
   // Name of the cache file to use for storing personal bests and other data.
   "cache_file": "cache.json",
   // Name of the file to use for user-defined callbacks.
-  "callbacks_file": "src/user_callbacks.py"
+  "callbacks_file": "src/user_callbacks.py",
+  // Configuration for the score shot feature, which takes a screenshot of a specific region of the screen when a new personal best is achieved.
+  "screenshot": {
+    // Whether to take a screenshot after trimming a clip
+    "enabled": true,
+    // Region of the screen to capture for the screenshot (relative to the top-left corner of the screen)
+    "region": {
+      "top": 151,
+      "left": 234,
+      "width": 2092,
+      "height": 1138
+    }
+  }
 }

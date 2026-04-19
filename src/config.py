@@ -1,5 +1,18 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TypedDict
 import json5
+
+
+class Region(TypedDict):
+    top: float
+    left: float
+    width: float
+    height: float
+
+
+class Screenshot(TypedDict):
+    enabled: bool
+    region: Region
 
 
 @dataclass
@@ -20,6 +33,7 @@ class Config:
     cache_version = "0.0.0"
     cache_file = "cache.json"
     callbacks_file = "src/user_callbacks.py"
+    screenshot: Screenshot = field(default_factory=lambda: {"enabled": True})
 
     def load_from_file(self, path="config.json"):
         with open(path, "r") as f:

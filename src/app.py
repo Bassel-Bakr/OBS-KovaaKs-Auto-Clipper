@@ -2,10 +2,12 @@ import importlib.util
 import subprocess
 from typing import Tuple
 import time
+import mss
 import obsws_python as obs
 from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
+from PIL import Image
 
 from src.cache import Cache
 from src.callback import Callbacks, TrimCallbackParams
@@ -96,6 +98,34 @@ def on_new_stat(
         output_path = trim_clip(Path(latest), duration_seconds, stat)
 
         print(f"✂️ Trimmed clip: {output_path}")
+
+        if config.screenshot["enabled"]:
+            screenshot_path = output_path.with_suffix(".png")
+
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
+
+                client.save_source_screenshot(
+                    name="KovaaK's",
+                    img_format="png",
+                    width=monitor["width"],
+                    height=monitor["height"],
+                    quality=100,
+                    file_path=str(screenshot_path),
+                )
+
+                # Crop the screenshot to the specified region if enabled
+                if config.screenshot["region"]:
+                    img = Image.open(screenshot_path)
+                    region = config.screenshot["region"]
+                    left = region["left"]
+                    top = region["top"]
+                    width = region["width"]
+                    height = region["height"]
+                    cropped_img = img.crop((left, top, left + width, top + height))
+                    cropped_img.save(screenshot_path)
+
+                print(f"📷 Screenshot taken: {screenshot_path}")
 
         if callbacks and hasattr(callbacks, "after_trimming"):
             params = TrimCallbackParams(
