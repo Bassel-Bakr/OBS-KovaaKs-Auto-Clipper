@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from src.utils import get_creation_or_modification_time
 
+DATE_TIME_FORMAT = "%Y.%m.%d-%H.%M.%S"
+
 
 @dataclass
 class Stat:
@@ -22,6 +24,17 @@ class Stat:
     @property
     def duration(self) -> timedelta:
         return self.end_dt - self.start_dt
+
+    @property
+    def formatted_end_dt(self) -> str:
+        return self.end_dt.strftime(DATE_TIME_FORMAT)
+
+    @property
+    def formatted_filename(self) -> str:
+        """
+        Generates a formatted filename based on the scenario, score, and end time.
+        """
+        return f"{self.scenario} - {self.score} - {self.formatted_end_dt}"
 
     def __init__(self, stat_file: Path):
         self.stat_file = stat_file
@@ -55,7 +68,7 @@ class Stat:
         """
         match = re.search(r"\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}", stat_file.name)
         if match:
-            return datetime.strptime(match.group(), "%Y.%m.%d-%H.%M.%S")
+            return datetime.strptime(match.group(), DATE_TIME_FORMAT)
 
         return get_creation_or_modification_time(stat_file)
 
@@ -82,7 +95,7 @@ def get_end_time(stat_file: Path) -> datetime:
     """
     match = re.search(r"\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}", stat_file.name)
     if match:
-        return datetime.strptime(match.group(), "%Y.%m.%d-%H.%M.%S")
+        return datetime.strptime(match.group(), DATE_TIME_FORMAT)
 
     return get_creation_or_modification_time(stat_file)
 

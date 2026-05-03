@@ -1,9 +1,11 @@
 import importlib.util
+import shutil
 import subprocess
 from typing import Tuple
 import time
 import mss
 import obsws_python as obs
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
@@ -68,6 +70,11 @@ def on_new_stat(
     # ==== WAIT a bit ====
     time.sleep(config.trim_padding_end)
 
+    # ==== Take screenshot if enabled ====
+    screenshot_path = None
+    if config.screenshot["enabled"]:
+        screenshot_path = screenshot(client, config, stat)
+
     # ==== Save replay buffer ====
     last_replay_path = client.get_last_replay_buffer_replay().saved_replay_path
 
@@ -99,33 +106,9 @@ def on_new_stat(
 
         print(f"✂️ Trimmed clip: {output_path}")
 
-        if config.screenshot["enabled"]:
-            screenshot_path = output_path.with_suffix(".png")
-
-            with mss.mss() as sct:
-                monitor = sct.monitors[1]
-
-                client.save_source_screenshot(
-                    name="KovaaK's",
-                    img_format="png",
-                    width=monitor["width"],
-                    height=monitor["height"],
-                    quality=100,
-                    file_path=str(screenshot_path),
-                )
-
-                # Crop the screenshot to the specified region if enabled
-                if config.screenshot["region"]:
-                    img = Image.open(screenshot_path)
-                    region = config.screenshot["region"]
-                    left = region["left"]
-                    top = region["top"]
-                    width = region["width"]
-                    height = region["height"]
-                    cropped_img = img.crop((left, top, left + width, top + height))
-                    cropped_img.save(screenshot_path)
-
-                print(f"📷 Screenshot taken: {screenshot_path}")
+        if screenshot_path:
+            shutil.move(screenshot_path, output_path.with_suffix(".png"))
+            print(f"📷 Screenshot taken: {screenshot_path}")
 
         if callbacks and hasattr(callbacks, "after_trimming"):
             params = TrimCallbackParams(
@@ -144,6 +127,41 @@ def on_new_stat(
         print(f"❌ Trim error: {e}")
 
 
+def screenshot(client: obs.ReqClient, config: Config, stat: Stat) -> Path:
+    """
+    Takes a screenshot using the OBS client and saves it to a temporary file.
+    """
+
+    screenshot_path = Path(tempfile.gettempdir()).joinpath(
+        f"{stat.formatted_filename}.png"
+    )
+
+    with mss.mss() as sct:
+        monitor = sct.monitors[1]
+
+        client.save_source_screenshot(
+            name="KovaaK's",
+            img_format="png",
+            width=monitor["width"],
+            height=monitor["height"],
+            quality=100,
+            file_path=str(screenshot_path),
+        )
+
+        # Crop the screenshot to the specified region if enabled
+        if config.screenshot["region"]:
+            img = Image.open(screenshot_path)
+            region = config.screenshot["region"]
+            left = region["left"]
+            top = region["top"]
+            width = region["width"]
+            height = region["height"]
+            cropped_img = img.crop((left, top, left + width, top + height))
+            cropped_img.save(screenshot_path)
+
+        return screenshot_path
+
+
 def trim_clip(input_path: Path, duration_seconds: int, stat: Stat):
     """
     Trims the input video to the specified duration and saves it with a filename based on the challenge name and score.
@@ -151,15 +169,11 @@ def trim_clip(input_path: Path, duration_seconds: int, stat: Stat):
     output_folder = input_path.with_name("KovaaK's").joinpath(stat.scenario)
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    clip_time = datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
-
     # For simplicity, we save as MP4. You can change this to match your OBS output format if needed.
     extension = "mp4"
     # extension = input_path.suffix.lstrip(".")
 
-    output_path = output_folder.joinpath(
-        f"{stat.scenario} - {stat.score} - {clip_time}.{extension}"
-    )
+    output_path = output_folder.joinpath(f"{stat.formatted_filename}.{extension}")
 
     cmd = [
         "ffmpeg",
